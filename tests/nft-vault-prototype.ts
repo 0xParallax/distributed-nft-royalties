@@ -35,31 +35,20 @@ describe('nft-vault-prototype', () => {
       "confirmed"
     );
 
-
-    // Send sol to pda
-    //let tx = new anchor.web3.Transaction()
-    //  .add(anchor.web3.SystemProgram.transfer({
-    //      fromPubkey: user1.publicKey,
-    //      toPubkey: pda,
-    //      lamports: lampsToSend,
-    //  }));
-
-    //await anchor.web3.sendAndConfirmTransaction(provider.connection, tx, [user1]);
-
-
-    let sig = await program.rpc.initializeVault(
-      {
-        accounts: {
-          vault: vaultAccount.publicKey,
-          authority: user1.publicKey,
-          systemProgram: anchor.web3.SystemProgram.programId
+    await provider.connection.confirmTransaction(
+      await program.rpc.initializeVault(
+        {
+          accounts: {
+            vault: vaultAccount.publicKey,
+            authority: user1.publicKey,
+            systemProgram: anchor.web3.SystemProgram.programId
+          },
+          signers: [user1, vaultAccount],
         },
-        signers: [user1, vaultAccount],
-      },
       
-    );
-    //await provider.connection.confirmTransaction(sig);
-    let vaultAccountInfo = await provider.connection.getParsedAccountInfo(vaultAccount.publicKey, "recent");
+    ));
+
+    let vaultAccountInfo = await provider.connection.getParsedAccountInfo(vaultAccount.publicKey, "confirmed");
     let owner = vaultAccountInfo.value.owner;
 
     console.log("User2 Account Owner: ", owner.toString());
@@ -89,18 +78,19 @@ describe('nft-vault-prototype', () => {
 
     console.log("PDA Initial Balance: ", balance);
 
-    await program.rpc.send(
-      new anchor.BN(lampsToSend),
-      {
-        accounts: {
-          from: user1.publicKey,
-          pda: pda,
-          vault: vaultAccount.publicKey,
-          systemProgram: anchor.web3.SystemProgram.programId
+    await provider.connection.confirmTransaction(
+      await program.rpc.send(
+        new anchor.BN(lampsToSend),
+        {
+          accounts: {
+            from: user1.publicKey,
+            pda: pda,
+            vault: vaultAccount.publicKey,
+            systemProgram: anchor.web3.SystemProgram.programId
+          },
+          signers: [user1]
         },
-        signers: [user1]
-      },
-    );
+    ));
 
 
     let balanceUser1 = await provider.connection.getBalance(user1.publicKey);
@@ -125,22 +115,23 @@ describe('nft-vault-prototype', () => {
     let [pda, bump] = await anchor.web3.PublicKey.findProgramAddress([Buffer.from("test")], programId);
     console.log(`bump: ${bump}, pubkey: ${pda.toBase58()}`);
 
-    let balance = await provider.connection.getBalance(pda);
+    let pdaBalance = await provider.connection.getBalance(pda);
 
-    console.log("PDA Initial Balance: ", balance);
+    console.log("PDA Initial Balance: ", pdaBalance);
 
 
-    await program.rpc.withdraw(
-      new anchor.BN(lampsToWithdraw),
-      {
-        accounts: {
-          to: user1.publicKey,
-          pda: pda,
-          vault: vaultAccount.publicKey,
-          systemProgram: anchor.web3.SystemProgram.programId
-        }
-      },
-    );
+    await provider.connection.confirmTransaction(
+      await program.rpc.withdraw(
+        new anchor.BN(lampsToWithdraw),
+        {
+          accounts: {
+            to: user1.publicKey,
+            pda: pda,
+            vault: vaultAccount.publicKey,
+            systemProgram: anchor.web3.SystemProgram.programId
+          }
+        },
+    ));
 
 
     let balanceUser1 = await provider.connection.getBalance(user1.publicKey);
@@ -154,7 +145,7 @@ describe('nft-vault-prototype', () => {
 
     let pdaAccountInfo = await provider.connection.getParsedAccountInfo(pda, "confirmed");
 
-    let pdaBalance = pdaAccountInfo.value.lamports;
+    pdaBalance = pdaAccountInfo.value.lamports;
 
     assert.equal(lampsToSend - lampsToWithdraw, pdaBalance);
   });
