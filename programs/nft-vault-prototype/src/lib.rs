@@ -8,9 +8,9 @@ declare_id!("5GL4DTAqK5j4MFWkdrf51TGGvcFePMuLrDSpnAvfNgqT");
 pub mod nft_vault_prototype {
 
     use super::*;
-    pub fn initialize_vault(ctx: Context<InitializeVault>) -> ProgramResult {
+    pub fn initialize_balance_ledger(ctx: Context<InitializeBalanceLedger>) -> ProgramResult {
 
-        ctx.accounts.vault.authority = *ctx.accounts.authority.key;
+        //ctx.accounts.vault.authority = *ctx.accounts.authority.key;
         Ok(())
     }
 
@@ -20,15 +20,15 @@ pub mod nft_vault_prototype {
         //    Err(error::ErrorCode(100))
         //}
 
-        assert_eq!(*ctx.accounts.to.key, ctx.accounts.vault.authority);
+        //assert_eq!(*ctx.accounts.to.key, ctx.accounts.vault.authority);
 
-        let ix = system_instruction::transfer(&ctx.accounts.pda.key, &ctx.accounts.to.key, amount);
-
-        invoke_signed(
-            &ix, 
-            &[ctx.accounts.system_program.to_account_info(), ctx.accounts.pda.to_account_info(), ctx.accounts.to.to_account_info()],
-            &[&[b"test", &[253]]],
-        )?;
+        //let ix = system_instruction::transfer(&ctx.accounts.pda.key, &ctx.accounts.to.key, amount);
+//
+        //invoke_signed(
+        //    &ix, 
+        //    &[ctx.accounts.system_program.to_account_info(), ctx.accounts.pda.to_account_info(), ctx.accounts.to.to_account_info()],
+        //    &[&[b"vault", &[255]]],
+        //)?;
         Ok(())
     }
 
@@ -41,15 +41,14 @@ pub mod nft_vault_prototype {
         )?;
         Ok(())
     }
-
 }
 
 #[derive(Accounts)]
-pub struct InitializeVault<'info> {
-    #[account(init, payer = authority, space = 128)]
-    vault: Account<'info, Vault>,
-    #[account(signer, mut)]
-    authority: AccountInfo<'info>,
+pub struct InitializeBalanceLedger<'info> {
+    #[account(init, payer = payer, space = 9000, seeds = [b"balance-ledger"], bump = 254)]
+    nft_balance_ledger: Account<'info, NftBalanceLedger>,
+    #[account(mut)]
+    payer: Signer<'info>,
     system_program: Program<'info, System>,
 }
 
@@ -59,7 +58,7 @@ pub struct Withdraw<'info> {
     to: SystemAccount<'info>,
     #[account(mut)]
     pda: SystemAccount<'info>,
-    vault: Account<'info, Vault>,
+    vault: Account<'info, NftBalanceLedger>,
     system_program: Program<'info, System>,
 }
 
@@ -69,14 +68,29 @@ pub struct Send<'info> {
     from: Signer<'info>,
     #[account(mut)]
     pda: SystemAccount<'info>,
-    vault: Account<'info, Vault>,
+    vault: Account<'info, NftBalanceLedger>,
     system_program: Program<'info, System>,
 }
 
 #[account]
-pub struct Vault {
-    pub authority: Pubkey,
-    pub amount: u64,
+pub struct NftBalanceLedger {
+    pub nft_balances: Vec<NftBalance>,
+    pub size: u64,
 }
 
+#[derive(AnchorSerialize, AnchorDeserialize, Clone, Debug)]
+pub struct NftBalance {
+    pub nft_address: String,
+    pub royalties_balance: u64,
+}
+
+impl NftBalanceLedger {
+    fn distribute_payments(&self, amount: u64) {
+        
+    }
+    
+    fn add_nft_to_ledger(&self, nft_address: String) {
+
+    }
+}
 
