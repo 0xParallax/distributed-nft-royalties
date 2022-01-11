@@ -107,26 +107,31 @@ describe('nft-vault-prototype', () => {
 
   });
 
-  it('Send to vault using payLabel!', async () => {
+  it('Send to vault using payLabel before Mints!', async () => {
     const programId = program.programId;
     
     let initialBalance = await provider.connection.getBalance(pdaVaultAddress);
 
     console.log("PDA Vault Initial Balance: ", initialBalance);
 
-    await provider.connection.confirmTransaction(
-      await program.rpc.payLabel(
-        new anchor.BN(lampsToSend),
-        {
-          accounts: {
-            from: user1.publicKey,
-            pdaVault: pdaVaultAddress,
-            nftBalanceLedger: pdaBalanceLedgerAddress,
-            systemProgram: anchor.web3.SystemProgram.programId
+    try {
+      await provider.connection.confirmTransaction(
+        await program.rpc.payLabel(
+          new anchor.BN(lampsToSend),
+          {
+            accounts: {
+              from: user1.publicKey,
+              pdaVault: pdaVaultAddress,
+              nftBalanceLedger: pdaBalanceLedgerAddress,
+              systemProgram: anchor.web3.SystemProgram.programId
+            },
+            signers: [user1]
           },
-          signers: [user1]
-        },
-    ));
+      ));
+    } catch (err) {
+      const errorMessage = "Error: Unable to distribute royalties as no NFTs have been minted";
+      assert.equal(errorMessage, err.toString());
+    }
 
 
     let balanceUser1 = await provider.connection.getBalance(user1.publicKey);
@@ -142,7 +147,7 @@ describe('nft-vault-prototype', () => {
 
     let pdaBalance = pdaAccountInfo.lamports;
   
-    assert.equal(lampsToSend + initialBalance, pdaBalance);
+    assert.equal(initialBalance, pdaBalance);
   });
 
   it('Add nft to ledger!', async () => {
@@ -242,15 +247,42 @@ describe('nft-vault-prototype', () => {
         }
     ));
   });
-  
-//
+
+  it('Send to vault using payLabel after Mints', async() => {
+    let initialBalance = await provider.connection.getBalance(pdaVaultAddress);
+    console.log("Balance PDA Vault: ", initialBalance);
+
+    await provider.connection.confirmTransaction(
+      await program.rpc.payLabel(
+        new anchor.BN(lampsToSend),
+        {
+          accounts: {
+            from: user1.publicKey,
+            pdaVault: pdaVaultAddress,
+            nftBalanceLedger: pdaBalanceLedgerAddress,
+            systemProgram: anchor.web3.SystemProgram.programId
+          },
+          signers: [user1]
+        },
+    ));
+
+    let finalBalance = await provider.connection.getBalance(pdaVaultAddress);
+    console.log("Balance PDA Vault: ", finalBalance);
+
+    assert.equal(initialBalance + lampsToSend, finalBalance);
+
+  });
+
   it('Withdraw from vault!', async () => {
 
     /**
      * User 1 Withdrawal
      */
-     const balanceUser1_before_withdraw = await provider.connection.getBalance(user_keypair_1.publicKey);
-     console.log("User 1 Balance - Before Withdrawal: ", balanceUser1_before_withdraw);
+     const initialBalance= await provider.connection.getBalance(user_keypair_1.publicKey);
+     console.log("User 1 Balance - Before Withdrawal: ", initialBalance);
+
+     const initialRoyalties = await (await program.account.nftBalanceLedger.fetch(pdaBalanceLedgerAddress)).nftBalances[0].royaltiesBalance.toNumber();
+
       await provider.connection.confirmTransaction(
       await program.rpc.withdraw(
        {
@@ -264,12 +296,7 @@ describe('nft-vault-prototype', () => {
        },
    ));
 
-   const balanceUser1_after_withdraw = await provider.connection.getBalance(user_keypair_1.publicKey);
-   console.log("User 1 Balance - After Withdrawal: ", balanceUser1_after_withdraw);
-
-   assert.equal(balanceUser1_before_withdraw + 3.5 * LAMPORTS_PER_SOL, balanceUser1_after_withdraw);
-
-    // Print NftBalanceLedger data
+    // fetch NftBalanceLedger data
     let ledgerAccountData = await program.account.nftBalanceLedger.fetch(pdaBalanceLedgerAddress);
 
     let nftBalances = ledgerAccountData.nftBalances;
@@ -279,5 +306,10 @@ describe('nft-vault-prototype', () => {
       let balance = nftBalances[i];
       console.log("Balance " + i + ": ", balance.royaltiesBalance.toNumber());
     }
+
+    const balanceUser1_after_withdraw = await provider.connection.getBalance(user_keypair_1.publicKey);
+    console.log("User 1 Balance - After Withdrawal: ", balanceUser1_after_withdraw);
+ 
+    assert.equal(initialBalance + initialRoyalties, balanceUser1_after_withdraw);
   });
 });

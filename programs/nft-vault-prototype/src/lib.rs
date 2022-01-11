@@ -10,9 +10,6 @@ pub mod nft_vault_prototype {
 
     use super::*;
     pub fn initialize_balance_ledger(_ctx: Context<InitializeBalanceLedger>) -> ProgramResult {
-
-        //ctx.accounts.vault.authority = *ctx.accounts.authority.key;
-
         Ok(())
     }
 
@@ -29,30 +26,42 @@ pub mod nft_vault_prototype {
 
         // Empty royalties_balance in ledger for given NFT
         // Errors out if NFT is not found in ledger
-        let owed_royalties = ctx.accounts.nft_balance_ledger.empty_royalties_balance_for_nft(ctx.accounts.nft.key());
+
+        let amount = ctx.accounts.nft_balance_ledger.empty_royalties_balance_for_nft(ctx.accounts.nft.key())?;
 
 
+        let ix = system_instruction::transfer(&ctx.accounts.pda_vault.key(), &ctx.accounts.to.key, amount);
+
+        // Withdraw
+        invoke_signed(
+            &ix, 
+            &[ctx.accounts.system_program.to_account_info(), ctx.accounts.pda_vault.to_account_info(), ctx.accounts.to.to_account_info()],
+            &[&[b"vault", &[255]]],
+        )?;
 
         // TODO: figure out how to use ProgramResult if we can
-        match owed_royalties {
-            Ok(amount) => {
-                let ix = system_instruction::transfer(&ctx.accounts.pda_vault.key(), &ctx.accounts.to.key, amount);
-
-                // Withdraw
-                invoke_signed(
-                    &ix, 
-                    &[ctx.accounts.system_program.to_account_info(), ctx.accounts.pda_vault.to_account_info(), ctx.accounts.to.to_account_info()],
-                    &[&[b"vault", &[255]]],
-                )?;
-            },
-            Err(e) => return Err(e.into()),
-        }
+        //match owed_royalties {
+        //    Ok(amount) => {
+        //        let ix = system_instruction::transfer(&ctx.accounts.pda_vault.key(), &ctx.accounts.to.key, amount);
+//
+        //        // Withdraw
+        //        invoke_signed(
+        //            &ix, 
+        //            &[ctx.accounts.system_program.to_account_info(), ctx.accounts.pda_vault.to_account_info(), ctx.accounts.to.to_account_info()],
+        //            &[&[b"vault", &[255]]],
+        //        )?;
+        //    },
+        //    Err(e) => return Err(e.into()),
+        //}
 
         
         Ok(())
     }
 
     pub fn pay_label(ctx: Context<PayLabel>, amount: u64) -> ProgramResult {
+
+        // Distribute payment to royalties balances for all minted NFTs
+        ctx.accounts.nft_balance_ledger.distribute_payments(amount)?;
 
         // Send sol to pda vault account
         let ix = system_instruction::transfer(&ctx.accounts.from.key, &ctx.accounts.pda_vault.key, amount);
@@ -61,9 +70,6 @@ pub mod nft_vault_prototype {
             &ix, 
             &[ctx.accounts.system_program.to_account_info(), ctx.accounts.pda_vault.to_account_info(), ctx.accounts.from.to_account_info()],
         )?;
-
-        // update the ledger nft balance royalties balance
-        ctx.accounts.nft_balance_ledger.distribute_payments(amount);
 
         Ok(())
     }
@@ -82,7 +88,7 @@ pub mod nft_vault_prototype {
             )?;
 
             // update the ledger nft balance royalties balance
-            ctx.accounts.nft_balance_ledger.distribute_payments(amount);
+            ctx.accounts.nft_balance_ledger.distribute_payments(amount)?;
         }
 
         // Add nft address to ledger
@@ -149,10 +155,10 @@ pub struct NftBalance {
 }
 
 impl NftBalanceLedger {
-    fn distribute_payments(&mut self, amount: u64){
+    fn distribute_payments(&mut self, amount: u64) -> Result<()> {
         // Todo: Error here if size is zero
         if self.size == 0{
-            return
+            return Err(ErrorCode::InvalidRoyaltiesDistribution.into())
         }
 
         // Todo: Ensure rounding doesn't introduce vulnerability
@@ -161,6 +167,8 @@ impl NftBalanceLedger {
         for nft_balance in self.nft_balances.iter_mut() {
             nft_balance.royalties_balance += amount_to_distribute;
         }
+
+        Ok(())
     }
     
     fn add_nft_to_ledger(&mut self, nft_address: Pubkey) {
@@ -194,5 +202,7 @@ pub enum ErrorCode {
     InvalidBalanceLedger,
     #[msg("Error: Withdrawer is not the NFT owner")]
     InvalidWithdrawer,
+    #[msg("Error: Unable to distribute royalties as no NFTs have been minted")]
+    InvalidRoyaltiesDistribution,
 }
 
