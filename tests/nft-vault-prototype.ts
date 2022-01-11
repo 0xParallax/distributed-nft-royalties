@@ -151,11 +151,6 @@ describe('nft-vault-prototype', () => {
   });
 
   it('Add nft to ledger!', async () => {
-    let [pdaVaultAddress, pdavaultBump] = await anchor.web3.PublicKey.findProgramAddress([Buffer.from("vault")], program.programId);
-    console.log(`bump: ${pdavaultBump}, pubkey: ${pdaVaultAddress.toBase58()}`);
-
-    let [pdaBalanceLedgerAddress, pdaBalanceLedgerBump] = await anchor.web3.PublicKey.findProgramAddress([Buffer.from("balance-ledger")], program.programId);
-    console.log(`bump: ${pdaBalanceLedgerBump}, pubkey: ${pdaBalanceLedgerAddress.toBase58()}`);
 
     /**
      * Mint NFT 1
@@ -246,6 +241,11 @@ describe('nft-vault-prototype', () => {
           signers: [user_keypair_3]
         }
     ));
+
+
+    // Todo: Need tests here verifying royalties balances have been updated
+
+
   });
 
   it('Send to vault using payLabel after Mints', async() => {
