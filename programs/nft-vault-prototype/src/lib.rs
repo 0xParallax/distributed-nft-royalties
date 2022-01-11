@@ -21,14 +21,19 @@ pub mod nft_vault_prototype {
         // Derive balance ledger PDA address
         let balance_ledger_pda = Pubkey::create_program_address(&[b"balance-ledger", &[254]], &id())?;
 
-        assert_eq!(balance_ledger_pda, ctx.accounts.nft_balance_ledger.key());
+        if balance_ledger_pda != ctx.accounts.nft_balance_ledger.key() {
+            return Err(ErrorCode::InvalidBalanceLedger.into())
+        }
+
+        // TODO: ensure owner is NFT owner - https://solanacookbook.com/references/nfts.html#get-the-owner-of-an-nft
 
         // Empty royalties_balance in ledger for given NFT
         // Errors out if NFT is not found in ledger
         let owed_royalties = ctx.accounts.nft_balance_ledger.empty_royalties_balance_for_nft(ctx.accounts.nft.key());
 
-        let mut errored = false;
 
+
+        // TODO: figure out how to use ProgramResult if we can
         match owed_royalties {
             Ok(amount) => {
                 let ix = system_instruction::transfer(&ctx.accounts.pda_vault.key(), &ctx.accounts.to.key, amount);
@@ -40,13 +45,9 @@ pub mod nft_vault_prototype {
                     &[&[b"vault", &[255]]],
                 )?;
             },
-            Err(_) => errored = true
+            Err(e) => return Err(e.into()),
         }
 
-        // TODO: figure out how to use ProgramResult
-        if errored {
-            return Err(ErrorCode::InvalidNft.into())
-        }
         
         Ok(())
     }
@@ -189,5 +190,9 @@ impl NftBalanceLedger {
 pub enum ErrorCode {
     #[msg("Error: NFT address not found in ledger")]
     InvalidNft,
+    #[msg("Error: Invalid Balance Ledger Address")]
+    InvalidBalanceLedger,
+    #[msg("Error: Withdrawer is not the NFT owner")]
+    InvalidWithdrawer,
 }
 
