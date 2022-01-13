@@ -130,6 +130,7 @@ describe('nft-vault-prototype', () => {
       ));
     } catch (err) {
       const errorMessage = "Error: Unable to distribute royalties as no NFTs have been minted";
+      console.log(err);
       assert.equal(errorMessage, err.toString());
     }
 
@@ -151,11 +152,8 @@ describe('nft-vault-prototype', () => {
   });
 
   it('Add nft to ledger!', async () => {
-    let [pdaVaultAddress, pdavaultBump] = await anchor.web3.PublicKey.findProgramAddress([Buffer.from("vault")], program.programId);
-    console.log(`bump: ${pdavaultBump}, pubkey: ${pdaVaultAddress.toBase58()}`);
 
-    let [pdaBalanceLedgerAddress, pdaBalanceLedgerBump] = await anchor.web3.PublicKey.findProgramAddress([Buffer.from("balance-ledger")], program.programId);
-    console.log(`bump: ${pdaBalanceLedgerBump}, pubkey: ${pdaBalanceLedgerAddress.toBase58()}`);
+    let nftBalanceLedger;
 
     /**
      * Mint NFT 1
@@ -185,6 +183,12 @@ describe('nft-vault-prototype', () => {
           signers: [user_keypair_1]
         }
     ));
+
+    // fetch NftBalanceLedger data
+    nftBalanceLedger = await program.account.nftBalanceLedger.fetch(pdaBalanceLedgerAddress);
+    let nft1Royalties = nftBalanceLedger.nftBalances[0].royaltiesBalance.toNumber();
+
+    assert.equal(0, nft1Royalties);
 
     /**
      * Mint NFT 2
@@ -216,6 +220,13 @@ describe('nft-vault-prototype', () => {
         }
     ));
 
+    nftBalanceLedger = await program.account.nftBalanceLedger.fetch(pdaBalanceLedgerAddress);
+    nft1Royalties = nftBalanceLedger.nftBalances[0].royaltiesBalance.toNumber();
+    let nft2Royalties = nftBalanceLedger.nftBalances[1].royaltiesBalance.toNumber();
+
+    assert.equal(2 * LAMPORTS_PER_SOL, nft1Royalties);
+    assert.equal(0, nft2Royalties);
+
     /**
      * Mint NFT 3
      */
@@ -246,6 +257,17 @@ describe('nft-vault-prototype', () => {
           signers: [user_keypair_3]
         }
     ));
+
+    nftBalanceLedger = await program.account.nftBalanceLedger.fetch(pdaBalanceLedgerAddress);
+    nft1Royalties = nftBalanceLedger.nftBalances[0].royaltiesBalance.toNumber();
+    nft2Royalties = nftBalanceLedger.nftBalances[1].royaltiesBalance.toNumber();
+    let nft3Royalties = nftBalanceLedger.nftBalances[2].royaltiesBalance.toNumber();
+
+    assert.equal(3.5 * LAMPORTS_PER_SOL, nft1Royalties);
+    assert.equal(1.5 * LAMPORTS_PER_SOL, nft2Royalties);
+    assert.equal(0, nft3Royalties)
+
+
   });
 
   it('Send to vault using payLabel after Mints', async() => {
@@ -283,6 +305,9 @@ describe('nft-vault-prototype', () => {
 
      const initialRoyalties = await (await program.account.nftBalanceLedger.fetch(pdaBalanceLedgerAddress)).nftBalances[0].royaltiesBalance.toNumber();
 
+     const largestAccounts = await provider.connection.getTokenLargestAccounts(new anchor.web3.PublicKey(nft_mint_address_1));
+     let nft_associated_account = largestAccounts.value[0].address;
+
       await provider.connection.confirmTransaction(
       await program.rpc.withdraw(
        {
@@ -290,6 +315,7 @@ describe('nft-vault-prototype', () => {
            to: user_keypair_1.publicKey,
            pdaVault: pdaVaultAddress,
            nft: nft_mint_address_1,
+           nftAssociatedAccount: nft_associated_account,
            nftBalanceLedger: pdaBalanceLedgerAddress,
            systemProgram: anchor.web3.SystemProgram.programId
          }
