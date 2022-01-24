@@ -9,7 +9,7 @@ import {
 
 import { Token, TOKEN_PROGRAM_ID } from "@solana/spl-token";
 
-export const mintNft = async (provider: anchor.Provider): Promise<{ userKeypair: Keypair, mintAddress: PublicKey }> => {
+export const mintNft = async (provider: anchor.Provider, nftPrice: number, vaultAddress: any): Promise<{ ownerKeypair: Keypair, mintAddress: PublicKey, nftPrice: number }> => {
     const connection = provider.connection// new Connection(clusterApiUrl("devnet"), "confirmed");
 
     const userKeypair = Keypair.generate();
@@ -64,9 +64,20 @@ export const mintNft = async (provider: anchor.Provider): Promise<{ userKeypair:
         userAssosciatedAccount.address
     );
     console.log("Balance: ", accountInfo.amount.toString());
-    
+
+    /**
+     * Transfer NFT Price to vault to mimic real world balance
+     */
+    let transferIx = anchor.web3.SystemProgram.transfer({ fromPubkey: userKeypair.publicKey, toPubkey: vaultAddress, lamports: nftPrice });
+    let transferTx = new anchor.web3.Transaction()
+        .add(transferIx);
+    await provider.connection.confirmTransaction(
+        await provider.connection.sendTransaction(transferTx, [userKeypair])
+    );
+
     return {
-        userKeypair,
-        mintAddress: mintAccount.publicKey
+        ownerKeypair: userKeypair,
+        mintAddress: mintAccount.publicKey,
+        nftPrice
     }
 };
