@@ -41,16 +41,22 @@ describe('nft-vault-prototype', () => {
   let artistLedgerPda;
   let artistLedgerBump;
 
+  let secondaryPoolPda;
+  let secondaryPoolBump;
+
   let rentExemptVaultAmount;
 
   /**
  * Defining collection parameters
  */
-  let artistAddress = new anchor.web3.PublicKey("DEV5aRVQQDUnFyZAsak2iY6Ci3iC661f9rvMHnKVvb6B");
+  let artistKeypair = anchor.web3.Keypair.generate();
+  let artistAddress = artistKeypair.publicKey;
   let artist_mint_percentage = 8000;
   let label_mint_percentage = 2000;
   let artist_secondary_percentage = 5000;
   let label_secondary_percentage = 5000;
+  let artist_licensing_percentage = 6000;
+  let label_licensing_percentage = 4000;
 
   it('Initialize global variables', async () => {
     // Create our PDA for the Collection Config Account
@@ -67,6 +73,9 @@ describe('nft-vault-prototype', () => {
 
     [artistLedgerPda, artistLedgerBump] = await anchor.web3.PublicKey.findProgramAddress([Buffer.from("artist-ledger")], program.programId);
     console.log(`bump: ${artistLedgerBump}, pubkey: ${artistLedgerPda.toBase58()}`);
+
+    [secondaryPoolPda, secondaryPoolBump] = await anchor.web3.PublicKey.findProgramAddress([Buffer.from("secondary-pool")], program.programId);
+    console.log(`bump: ${secondaryPoolBump}, pubkey: ${secondaryPoolPda.toBase58()}`);
   })
 
   /**
@@ -114,6 +123,8 @@ describe('nft-vault-prototype', () => {
           new anchor.BN(2000), // label_mint_percentage
           new anchor.BN(5000), // artist_secondary_percentage
           new anchor.BN(5000), // label_secondary_percentage
+          new anchor.BN(artist_licensing_percentage),
+          new anchor.BN(label_licensing_percentage),
           artistAddress,
           {
             accounts: {
@@ -133,7 +144,7 @@ describe('nft-vault-prototype', () => {
     }
 
     /**
-     * Scenario 3.1: Try init with incorrect mint percentages
+     * Scenario 3.2: Try init with incorrect mint percentages
      */
     try {
       await provider.connection.confirmTransaction(
@@ -142,6 +153,38 @@ describe('nft-vault-prototype', () => {
           new anchor.BN(2000), // label_mint_percentage
           new anchor.BN(4000), // artist_secondary_percentage
           new anchor.BN(5000), // label_secondary_percentage
+          new anchor.BN(artist_licensing_percentage),
+          new anchor.BN(label_licensing_percentage),
+          artistAddress,
+          {
+            accounts: {
+              collectionConfig: pdaCollectionConfigAddress,
+              nftBalanceLedger: pdaNftLedgerAddress,
+              artistBalanceLedger: artistLedgerPda,
+              payer: collectionAuthority.publicKey,
+              systemProgram: anchor.web3.SystemProgram.programId
+            },
+            signers: [collectionAuthority]
+          }
+        ));
+    } catch (err) {
+      const errorMessage = "Error: Invalid Collection Config parameters";
+      console.log(err);
+      assert.equal(errorMessage, err.toString());
+    }
+
+    /**
+ * Scenario 3.3: Try init with incorrect licensing percentages
+ */
+    try {
+      await provider.connection.confirmTransaction(
+        await program.rpc.initializeCollection(
+          new anchor.BN(8000), // artist_mint_percentage
+          new anchor.BN(2000), // label_mint_percentage
+          new anchor.BN(5000), // artist_secondary_percentage
+          new anchor.BN(5000), // label_secondary_percentage
+          new anchor.BN(2000), // artist_licensing_percentage
+          new anchor.BN(5000), // label_licensing_percentage
           artistAddress,
           {
             accounts: {
@@ -169,6 +212,8 @@ describe('nft-vault-prototype', () => {
         new anchor.BN(label_mint_percentage), // label_mint_percentage
         new anchor.BN(artist_secondary_percentage), // artist_secondary_percentage
         new anchor.BN(label_secondary_percentage), // label_secondary_percentage
+        new anchor.BN(artist_licensing_percentage), // artist_licensing_percentage
+        new anchor.BN(label_licensing_percentage), // label_licensing_percentage
         artistAddress, // TODO: figure out how to serialize artist splits
         {
           accounts: {
@@ -596,119 +641,185 @@ describe('nft-vault-prototype', () => {
     assert.equal(initialBalance + initialRoyalties, balanceArtist1_after_withdraw);
   });
 
+  it('Pay licensing fee', async () => {
 
+  })
 
+  it('Distribute secondary pool', async () => {
 
-  // it('Send to vault using payLabel before Mints!', async () => {
-  //   const programId = program.programId;
+    // Airdrop some sol
+    await provider.connection.confirmTransaction(
+      await provider.connection.requestAirdrop(secondaryPoolPda, airdropAmount),
+      "confirmed"
+    );
 
-  //   let initialBalance = await provider.connection.getBalance(pdaVaultAddress);
+    const secondaryPoolBalance_Before = await provider.connection.getBalance(secondaryPoolPda);
+    printBalance(provider, [secondaryPoolPda], ['before - secondary-pool']);
 
-  //   console.log("PDA Vault Initial Balance: ", initialBalance);
+    const artistLedger_Before = await (await program.account.artistBalanceLedger.fetch(artistLedgerPda)).artistBalances as any[]; // [0].royaltiesBalance.toNumber();
+    const nftLedger_Before = await (await program.account.nftBalanceLedger.fetch(pdaNftLedgerAddress)).nftBalances as any[];
 
-  //   try {
-  //     await provider.connection.confirmTransaction(
-  //       await program.rpc.payLabel(
-  //         new anchor.BN(lampsToSend),
-  //         {
-  //           accounts: {
-  //             from: user1.publicKey,
-  //             pdaVault: pdaVaultAddress,
-  //             nftBalanceLedger: pdaNftLedgerAddress,
-  //             systemProgram: anchor.web3.SystemProgram.programId
-  //           },
-  //           signers: [user1]
-  //         },
-  //       ));
-  //   } catch (err) {
-  //     const errorMessage = "Error: Unable to distribute royalties as no NFTs have been minted";
-  //     console.log(err);
-  //     assert.equal(errorMessage, err.toString());
-  //   }
+    // Distribute secondary pool
+    await provider.connection.confirmTransaction(
+      await program.rpc.distributeSecondaryPool(
+        {
+          accounts: {
+            pdaVault: pdaVaultAddress,
+            pdaSecondaryPool: secondaryPoolPda,
+            collectionConfig: pdaCollectionConfigAddress,
+            artistBalanceLedger: artistLedgerPda,
+            nftBalanceLedger: pdaNftLedgerAddress,
+            systemProgram: anchor.web3.SystemProgram.programId
+          }
+        },
+      ));
 
+    const secondaryPoolBalance_After = await provider.connection.getBalance(secondaryPoolPda);
+    printBalance(provider, [secondaryPoolPda], ['after - secondary-pool']);
 
-  //   let balanceUser1 = await provider.connection.getBalance(user1.publicKey);
-  //   let balanceUser2 = await provider.connection.getBalance(user2.publicKey);
-  //   let balancePda = await provider.connection.getBalance(pdaVaultAddress);
+    assert.equal(secondaryPoolBalance_After, 0);
+    assert.equal(secondaryPoolBalance_Before - secondaryPoolBalance_After, airdropAmount);
 
+    const artistLedger_After = await (await program.account.artistBalanceLedger.fetch(artistLedgerPda)).artistBalances as any[]; // [0].royaltiesBalance.toNumber();
+    const nftLedger_After = await (await program.account.nftBalanceLedger.fetch(pdaNftLedgerAddress)).nftBalances as any[];
 
-  //   console.log("Balance User1: ", balanceUser1);
-  //   console.log("Balance User2: ", balanceUser2);
-  //   console.log("Balance PDA Vault: ", balancePda);
+    /**
+     * Verify Artist Ledger amounts
+     */
+    const amountDistributedToArtists = Math.floor(airdropAmount * convertBasisPointsToPercentage(artist_secondary_percentage));
+    for (let i = 0; i < artistLedger_After.length; i++) {
+      const difference = artistLedger_After[i].royaltiesBalance.toNumber() - artistLedger_Before[i].royaltiesBalance.toNumber();
+      // TODO: add support for multi artist
+      assert.equal(difference, amountDistributedToArtists);
+    }
 
-  //   let pdaAccountInfo = await provider.connection.getAccountInfo(pdaVaultAddress, "confirmed");
+    /**
+     * Verify Member Ledger amounts
+     */
+    const amountDistributedToEachMember = Math.floor(airdropAmount * convertBasisPointsToPercentage(label_secondary_percentage) / nftLedger_After.length);
+    for (let i = 0; i < nftLedger_After.length; i++) {
+      const difference = nftLedger_After[i].royaltiesBalance.toNumber() - nftLedger_Before[i].royaltiesBalance.toNumber();
+      assert.equal(difference, amountDistributedToEachMember);
+    }
+  })
 
-  //   let pdaBalance = pdaAccountInfo.lamports;
+  it('Pay Licensing fee!', async () => {
 
-  //   assert.equal(initialBalance, pdaBalance);
-  // });
+    // Airdrop some sol
+    await provider.connection.confirmTransaction(
+      await provider.connection.requestAirdrop(user1.publicKey, airdropAmount),
+      "confirmed"
+    );
 
-  // it('Send to vault using payLabel after Mints', async () => {
-  //   let initialBalance = await provider.connection.getBalance(pdaVaultAddress);
-  //   console.log("Balance PDA Vault: ", initialBalance);
+    const user1_Before = await provider.connection.getBalance(user1.publicKey);
+    printBalance(provider, [user1.publicKey], ['before - user1']);
 
-  //   await provider.connection.confirmTransaction(
-  //     await program.rpc.payLabel(
-  //       new anchor.BN(lampsToSend),
-  //       {
-  //         accounts: {
-  //           from: user1.publicKey,
-  //           pdaVault: pdaVaultAddress,
-  //           nftBalanceLedger: pdaNftLedgerAddress,
-  //           systemProgram: anchor.web3.SystemProgram.programId
-  //         },
-  //         signers: [user1]
-  //       },
-  //     ));
+    const vault_Before = await provider.connection.getBalance(pdaVaultAddress);
+    printBalance(provider, [pdaVaultAddress], ['before - vault']);
 
-  //   let finalBalance = await provider.connection.getBalance(pdaVaultAddress);
-  //   console.log("Balance PDA Vault: ", finalBalance);
+    const artistLedger_Before = await (await program.account.artistBalanceLedger.fetch(artistLedgerPda)).artistBalances as any[]; // [0].royaltiesBalance.toNumber();
+    const nftLedger_Before = await (await program.account.nftBalanceLedger.fetch(pdaNftLedgerAddress)).nftBalances as any[];
 
-  //   assert.equal(initialBalance + lampsToSend, finalBalance);
+    // Distribute secondary pool
+    await provider.connection.confirmTransaction(
+      await program.rpc.payLicensingFee(
+        new anchor.BN(airdropAmount), // amount
+        {
+          accounts: {
+            from: user1.publicKey,
+            pdaVault: pdaVaultAddress,
+            collectionConfig: pdaCollectionConfigAddress,
+            artistBalanceLedger: artistLedgerPda,
+            nftBalanceLedger: pdaNftLedgerAddress,
+            systemProgram: anchor.web3.SystemProgram.programId
+          },
+          signers: [user1]
+        },
+      ));
 
-  // });
+    /**
+     * Verify amount of Sol was transferred from User 1 to Vault.
+     */
+    const user1_After = await provider.connection.getBalance(user1.publicKey);
+    printBalance(provider, [user1.publicKey], ['after - user1']);
 
-  // it('Withdraw from vault!', async () => {
+    const vault_After = await provider.connection.getBalance(pdaVaultAddress);
+    printBalance(provider, [pdaVaultAddress], ['after - vault']);
 
-  //   /**
-  //    * User 1 Withdrawal
-  //    */
-  //   const initialBalance = await provider.connection.getBalance(nft_1.ownerKeypair.publicKey);
-  //   console.log("User 1 Balance - Before Withdrawal: ", initialBalance);
+    assert.equal(user1_Before - user1_After, airdropAmount);
+    assert.equal(vault_After - vault_Before, airdropAmount);
 
-  //   const initialRoyalties = await (await program.account.nftBalanceLedger.fetch(pdaNftLedgerAddress)).nftBalances[0].royaltiesBalance.toNumber();
+    const artistLedger_After = await (await program.account.artistBalanceLedger.fetch(artistLedgerPda)).artistBalances as any[]; // [0].royaltiesBalance.toNumber();
+    const nftLedger_After = await (await program.account.nftBalanceLedger.fetch(pdaNftLedgerAddress)).nftBalances as any[];
 
-  //   const largestAccounts = await provider.connection.getTokenLargestAccounts(new anchor.web3.PublicKey(nft_1.mintAddress));
-  //   let nft_associated_account = largestAccounts.value[0].address;
+    /**
+     * Verify Artist Ledger amounts
+     */
+    const amountDistributedToArtists = Math.floor(airdropAmount * convertBasisPointsToPercentage(artist_licensing_percentage));
+    for (let i = 0; i < artistLedger_After.length; i++) {
+      const difference = artistLedger_After[i].royaltiesBalance.toNumber() - artistLedger_Before[i].royaltiesBalance.toNumber();
+      // TODO: add support for multi artist
+      assert.equal(difference, amountDistributedToArtists);
+    }
 
-  //   await provider.connection.confirmTransaction(
-  //     await program.rpc.withdraw(
-  //       {
-  //         accounts: {
-  //           to: nft_1.ownerKeypair.publicKey,
-  //           pdaVault: pdaVaultAddress,
-  //           nft: nft_1.mintAddress,
-  //           nftAssociatedAccount: nft_associated_account,
-  //           nftBalanceLedger: pdaNftLedgerAddress,
-  //           systemProgram: anchor.web3.SystemProgram.programId
-  //         }
-  //       },
-  //     ));
+    /**
+     * Verify Member Ledger amounts
+     */
+    const amountDistributedToEachMember = Math.floor(airdropAmount * convertBasisPointsToPercentage(label_licensing_percentage) / nftLedger_After.length);
+    for (let i = 0; i < nftLedger_After.length; i++) {
+      const difference = nftLedger_After[i].royaltiesBalance.toNumber() - nftLedger_Before[i].royaltiesBalance.toNumber();
+      assert.equal(difference, amountDistributedToEachMember);
+    }
+  })
 
-  //   // fetch NftBalanceLedger data
-  //   let ledgerAccountData = await program.account.nftBalanceLedger.fetch(pdaNftLedgerAddress);
+  it('Transfer Collection Authority!', async () => {
+    let newCollectionAuthority = anchor.web3.Keypair.generate();
 
-  //   let nftBalances = ledgerAccountData.nftBalances;
-  //   let size = ledgerAccountData.size.toNumber();
+    let collectionConfig = await program.account.collectionConfiguration.fetch(pdaCollectionConfigAddress);
+    let collectionAuthorityResult_Before = collectionConfig.collectionAuthority.toBase58();
+    assert.equal(collectionAuthorityResult_Before, collectionAuthority.publicKey.toBase58());
 
-  //   for (let i = 0; i < size; i++) {
-  //     let balance = nftBalances[i];
-  //     console.log("Balance " + i + ": ", balance.royaltiesBalance.toNumber());
-  //   }
+    console.log("previous authority: ", collectionAuthority.publicKey.toBase58())
 
-  //   const balanceUser1_after_withdraw = await provider.connection.getBalance(nft_1.ownerKeypair.publicKey);
-  //   console.log("User 1 Balance - After Withdrawal: ", balanceUser1_after_withdraw);
+    // Try to sign with fake artist
+    const fakeArtist = anchor.web3.Keypair.generate();
 
-  //   assert.equal(initialBalance + initialRoyalties, balanceUser1_after_withdraw);
-  // });
+    try {
+      await provider.connection.confirmTransaction(
+        await program.rpc.transferCollectionAuthority(
+          {
+            accounts: {
+              collectionConfig: pdaCollectionConfigAddress,
+              currentCollectionAuthority: collectionAuthority.publicKey,
+              artistAuthorizer: fakeArtist.publicKey,
+              newCollectionAuthority: newCollectionAuthority.publicKey
+            },
+            signers: [collectionAuthority, fakeArtist]
+          },
+        ));
+    } catch (err) {
+      const errorMessage = "Error: Artist address not found in ledger";
+      console.log(err);
+      assert.equal(errorMessage, err.toString());
+    }
+
+    await provider.connection.confirmTransaction(
+      await program.rpc.transferCollectionAuthority(
+        {
+          accounts: {
+            collectionConfig: pdaCollectionConfigAddress,
+            currentCollectionAuthority: collectionAuthority.publicKey,
+            artistAuthorizer: artistKeypair.publicKey,
+            newCollectionAuthority: newCollectionAuthority.publicKey
+          },
+          signers: [collectionAuthority, artistKeypair]
+        },
+      ));
+
+    collectionConfig = await program.account.collectionConfiguration.fetch(pdaCollectionConfigAddress);
+    let collectionAuthorityResult_After = collectionConfig.collectionAuthority.toBase58();
+    assert.equal(collectionAuthorityResult_After, newCollectionAuthority.publicKey.toBase58());
+
+    console.log("new authority: ", newCollectionAuthority.publicKey.toBase58())
+  })
 });

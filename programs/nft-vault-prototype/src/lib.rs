@@ -9,13 +9,14 @@ declare_id!("5GL4DTAqK5j4MFWkdrf51TGGvcFePMuLrDSpnAvfNgqT");
 pub mod nft_vault_prototype {
 
     use super::*;
-    // TODO: pass in all relevant accounts to be initialized by the program
     pub fn initialize_collection(
         _ctx: Context<InitializeCollection>,
         artist_mint_percentage: u64,
         label_mint_percentage: u64,
         artist_secondary_percentage: u64,
         label_secondary_percentage: u64,
+        artist_licensing_percentage: u64,
+        label_licensing_percentage: u64,
         // artist_splits: Vec<ArtistPercentage>,
         single_artist: Pubkey,
     ) -> ProgramResult {
@@ -24,6 +25,7 @@ pub mod nft_vault_prototype {
         // Verify label splits add up to 100%
         if artist_mint_percentage + label_mint_percentage != one_hundred_percent
             || artist_secondary_percentage + label_secondary_percentage != one_hundred_percent
+            || artist_licensing_percentage + label_licensing_percentage != one_hundred_percent
         {
             return Err(ErrorCode::InvalidCollectionConfig.into());
         }
@@ -40,6 +42,10 @@ pub mod nft_vault_prototype {
         // Set percentage splits used on resales and licensing
         _ctx.accounts.collection_config.artist_secondary_percentage = artist_secondary_percentage;
         _ctx.accounts.collection_config.label_secondary_percentage = label_secondary_percentage;
+
+        // Set percentage splits used on resales and licensing
+        _ctx.accounts.collection_config.artist_licensing_percentage = artist_licensing_percentage;
+        _ctx.accounts.collection_config.label_licensing_percentage = label_licensing_percentage;
 
         let artist_split = ArtistPercentage {
             artist_address: single_artist,
@@ -157,20 +163,80 @@ pub mod nft_vault_prototype {
      * Must be distributed to ledger and transferred to vault
      */
     pub fn distribute_secondary_pool(ctx: Context<DistributeSecondaryPool>) -> ProgramResult {
-        Ok(())
-    }
+        // TODO: add annotations or manually check PDAs
+        let one_hundred_percent = 10000;
 
-    pub fn pay_licensing_fee(ctx: Context<PayLicensingFee>) -> ProgramResult {
-        Ok(())
-    }
+        let amount = ctx.accounts.pda_secondary_pool.lamports();
 
-    pub fn pay_label(ctx: Context<PayLabel>, amount: u64) -> ProgramResult {
-        // Distribute payment to royalties balances for all minted NFTs
+        // Can't license if no NFTs were minted
+        if ctx.accounts.nft_balance_ledger.size == 0 {
+            return Err(ErrorCode::NoNftsInCollection.into());
+        }
+
+        // Calculate and distribute payment to Artists ledger
+        let amount_to_artists = amount * ctx.accounts.collection_config.artist_secondary_percentage
+            / one_hundred_percent;
+        ctx.accounts
+            .artist_balance_ledger
+            .distribute_artist_payments(
+                amount_to_artists,
+                ctx.accounts.collection_config.artist_splits.clone(),
+            )?;
+
+        // Calculate and distribute payment to Label ledger
+        let amount_to_label = amount * ctx.accounts.collection_config.label_secondary_percentage
+            / one_hundred_percent;
         ctx.accounts
             .nft_balance_ledger
-            .distribute_payments(amount)?;
+            .distribute_payments(amount_to_label)?;
 
-        // Send sol to pda vault account
+        let ix = system_instruction::transfer(
+            &ctx.accounts.pda_secondary_pool.key,
+            &ctx.accounts.pda_vault.key(),
+            amount,
+        );
+
+        // Withdraw
+        invoke_signed(
+            &ix,
+            &[
+                ctx.accounts.system_program.to_account_info(),
+                ctx.accounts.pda_secondary_pool.to_account_info(),
+                ctx.accounts.pda_vault.to_account_info(),
+            ],
+            &[&[b"secondary-pool", &[255]]],
+        )?;
+
+        Ok(())
+    }
+
+    pub fn pay_licensing_fee(ctx: Context<PayLicensingFee>, amount: u64) -> ProgramResult {
+        // TODO: add annotations or manually check PDAs
+        let one_hundred_percent = 10000;
+
+        // Can't license if no NFTs were minted
+        if ctx.accounts.nft_balance_ledger.size == 0 {
+            return Err(ErrorCode::NoNftsInCollection.into());
+        }
+
+        // Calculate and distribute payment to Artists ledger
+        let amount_to_artists = amount * ctx.accounts.collection_config.artist_licensing_percentage
+            / one_hundred_percent;
+        ctx.accounts
+            .artist_balance_ledger
+            .distribute_artist_payments(
+                amount_to_artists,
+                ctx.accounts.collection_config.artist_splits.clone(),
+            )?;
+
+        // Calculate and distribute payment to Label ledger
+        let amount_to_label = amount * ctx.accounts.collection_config.label_licensing_percentage
+            / one_hundred_percent;
+        ctx.accounts
+            .nft_balance_ledger
+            .distribute_payments(amount_to_label)?;
+
+        // Send Sol to Vault account
         let ix = system_instruction::transfer(
             &ctx.accounts.from.key,
             &ctx.accounts.pda_vault.key,
@@ -192,7 +258,7 @@ pub mod nft_vault_prototype {
     pub fn add_nft(ctx: Context<AddNft>, amount_paid: u64) -> ProgramResult {
         let one_hundred_percent = 10000;
 
-        // TODO: CollectionAuthority signed
+        // Verify Collection Authority signed
         if ctx.accounts.collection_config.collection_authority
             != ctx.accounts.collection_authority.key()
         {
@@ -215,7 +281,7 @@ pub mod nft_vault_prototype {
                     ctx.accounts.collection_config.artist_splits.clone(),
                 )?;
         } else {
-            let amount_to_artist = amount_paid
+            let amount_to_artists = amount_paid
                 * ctx.accounts.collection_config.artist_mint_percentage
                 / one_hundred_percent;
 
@@ -223,7 +289,7 @@ pub mod nft_vault_prototype {
             ctx.accounts
                 .artist_balance_ledger
                 .distribute_artist_payments(
-                    amount_to_artist,
+                    amount_to_artists,
                     ctx.accounts.collection_config.artist_splits.clone(),
                 )?;
 
@@ -244,6 +310,20 @@ pub mod nft_vault_prototype {
 
         Ok(())
     }
+
+    pub fn transfer_collection_authority(
+        ctx: Context<TransferCollectionAuthority>,
+    ) -> ProgramResult {
+        for artist in ctx.accounts.collection_config.artist_splits.iter_mut() {
+            if artist.artist_address == ctx.accounts.artist_authorizer.key() {
+                ctx.accounts.collection_config.collection_authority =
+                    ctx.accounts.new_collection_authority.key();
+                return Ok(());
+            }
+        }
+
+        return Err(ErrorCode::InvalidArtist.into());
+    }
 }
 
 // TODO: can the vault just be combined in balance ledger?
@@ -254,15 +334,22 @@ pub struct InitializeCollection<'info> {
     collection_config: Account<'info, CollectionConfiguration>,
     #[account(init, payer = payer, space = 9000, seeds = [b"nft-ledger"], bump = 255)]
     nft_balance_ledger: Account<'info, NftBalanceLedger>,
-    // All PDAs are verified implicitly by macros
     #[account(init, payer = payer, space = 500, seeds = [b"artist-ledger"], bump = 255)]
     artist_balance_ledger: Account<'info, ArtistBalanceLedger>,
     #[account(mut)]
     payer: Signer<'info>,
     system_program: Program<'info, System>,
 }
+#[derive(Accounts)]
+pub struct TransferCollectionAuthority<'info> {
+    #[account(mut)]
+    collection_config: Account<'info, CollectionConfiguration>,
+    current_collection_authority: Signer<'info>,
+    artist_authorizer: Signer<'info>, // must also be signed by 1 artist
+    new_collection_authority: SystemAccount<'info>,
+}
 
-// TODO: when and where should we use UncheckedAccount
+// TODO: when and where should we use UncheckedAccount? Should we avoid using Signer and check manually?
 #[derive(Accounts)]
 pub struct MemberWithdraw<'info> {
     #[account(mut)]
@@ -290,9 +377,12 @@ pub struct ArtistWithdraw<'info> {
 #[derive(Accounts)]
 pub struct DistributeSecondaryPool<'info> {
     #[account(mut)]
-    from: Signer<'info>,
-    #[account(mut)]
     pda_vault: SystemAccount<'info>,
+    #[account(mut, seeds = [b"secondary-pool"], bump = 255)]
+    pda_secondary_pool: SystemAccount<'info>,
+    collection_config: Account<'info, CollectionConfiguration>,
+    #[account(mut)]
+    artist_balance_ledger: Account<'info, ArtistBalanceLedger>,
     #[account(mut)]
     nft_balance_ledger: Account<'info, NftBalanceLedger>,
     system_program: Program<'info, System>,
@@ -304,17 +394,9 @@ pub struct PayLicensingFee<'info> {
     from: Signer<'info>,
     #[account(mut)]
     pda_vault: SystemAccount<'info>,
+    collection_config: Account<'info, CollectionConfiguration>,
     #[account(mut)]
-    nft_balance_ledger: Account<'info, NftBalanceLedger>,
-    system_program: Program<'info, System>,
-}
-
-#[derive(Accounts)]
-pub struct PayLabel<'info> {
-    #[account(mut)]
-    from: Signer<'info>,
-    #[account(mut)]
-    pda_vault: SystemAccount<'info>,
+    artist_balance_ledger: Account<'info, ArtistBalanceLedger>,
     #[account(mut)]
     nft_balance_ledger: Account<'info, NftBalanceLedger>,
     system_program: Program<'info, System>,
@@ -347,8 +429,10 @@ pub struct CollectionConfiguration {
     pub collection_authority: Pubkey,
     pub artist_mint_percentage: u64, // mint % is only used for mint splits
     pub label_mint_percentage: u64,
-    pub artist_secondary_percentage: u64, // secondary % is used for licensing and resale splits
+    pub artist_secondary_percentage: u64, // secondary % is used for resales and direct deposits to secondary pool
     pub label_secondary_percentage: u64,
+    pub artist_licensing_percentage: u64, // licensing % is used for licensing payments
+    pub label_licensing_percentage: u64,
     pub artist_splits: Vec<ArtistPercentage>,
 }
 
@@ -501,4 +585,6 @@ pub enum ErrorCode {
     MissingCollectionAuthoritySignature,
     #[msg("Error: Artist Ledger not initialized")]
     ArtistLedgerNotInitialized,
+    #[msg("Error: Cannot pay Licensing as no NFTs were minted in collection")]
+    NoNftsInCollection,
 }
